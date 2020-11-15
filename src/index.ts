@@ -2,23 +2,23 @@
 import { Storage } from "@google-cloud/storage";
 import * as readline from "readline";
 import csvParse from "csv-parse/lib/sync";
-import { booksRef, quotesRef } from "./util/firebase";
+import { booksRef, firestore, quotesRef } from "./util/firebase";
 const storage = new Storage();
 
 interface IExtract {
   title: string;
-  author: string;
+  authors: string[];
   preview: string;
   quotes: string[];
 }
 
-const readFile = async (fileName, bucket) => {
+const readFile = async (fileName, bucket, user = "tim.won.m3@gmail.com") => {
   console.log(`Reading file ${fileName}`);
   const readStream = storage.bucket(bucket).file(fileName).createReadStream();
   try {
     console.time("Processing time:");
-    const result = await readDataFromFile(readStream);
-    uploadArticles(result);
+    const result = await readDataFromFile(readStream, user);
+    uploadArticles(result, user);
     booksRef.add(result);
     moveFile(fileName, bucket, "processed");
     console.timeEnd("Processing time:");
@@ -28,12 +28,15 @@ const readFile = async (fileName, bucket) => {
   }
 };
 
-const uploadArticles = (extract: IExtract) => {
+const uploadArticles = (extract: IExtract, user: string) => {
   const quotes = extract.quotes.map((quote) => {
     return {
       title: extract.title,
-      author: extract.author,
+      authors: extract.authors,
       quote: quote,
+      uploadedBy: user,
+      createdAt: firestore.FieldValue.serverTimestamp(),
+      updatedAt: firestore.FieldValue.serverTimestamp(),
     };
   });
 
@@ -42,13 +45,21 @@ const uploadArticles = (extract: IExtract) => {
   });
 };
 
-const readDataFromFile = (readable): Promise<IExtract> => {
+/**
+ * @summary Formats the CSV file provided by Amazon Kindle
+ * @param readable
+ * @param user
+ */
+const readDataFromFile = (readable, user): Promise<IExtract> => {
   return new Promise((resolve, reject) => {
     const output = {
       title: "",
-      author: "",
+      authors: [],
       preview: "",
       quotes: [],
+      uploadedBy: user,
+      createdAt: firestore.FieldValue.serverTimestamp(),
+      updatedAt: firestore.FieldValue.serverTimestamp(),
     };
     let lineCount = 1;
     readable.on("error", (error) => reject(error));
@@ -58,8 +69,8 @@ const readDataFromFile = (readable): Promise<IExtract> => {
         if (lineCount === 2) {
           output.title = cleanLine(line);
         } else if (lineCount === 3) {
-          //author
-          output.author = cleanLine(line);
+          // may be multiple authors
+          output.authors = cleanLine(line).split(",");
         } else if (lineCount === 5) {
           // preview
           output.preview = cleanLine(line);
@@ -83,16 +94,14 @@ function cleanLine(line: string) {
 
 const modifyFilePath = (
   fileName: string,
-  state: "new" | "processed" | "error" = "new"
+  state: "new" | "processed" | "error" = "new",
+  oldState = "new"
 ): string => {
-  return fileName.replace("new", state);
+  return fileName.replace(oldState, state);
 };
 
 const moveFile = (file, bucket, state) => {
-  storage
-    .bucket(bucket)
-    .file(modifyFilePath(file))
-    .move(modifyFilePath(file, state));
+  storage.bucket(bucket).file(file).move(modifyFilePath(file, state));
 };
 
 export const storageTrigger = async (data: any, _context) => {
