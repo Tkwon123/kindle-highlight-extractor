@@ -85,7 +85,7 @@ const readDataFromFile = (readable, user): Promise<IExtract> => {
 };
 
 function cleanLine(line: string) {
-  line = line.replace('"', "");
+  line = line.replace(/"/g, "");
   line = line.replace(/,{2,}/g, "");
   line = line.replace(/^by /g, "");
   line = line.trim();
